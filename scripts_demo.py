@@ -11,8 +11,8 @@ for line in env_path.read_text().splitlines() if env_path.exists() else []:
 base = "http://localhost:8000"
 headers = {"x-api-key": os.environ["API_KEY"]}
 with httpx.Client(base_url=base, headers=headers, timeout=30) as client:
-    response = client.post("/token", json={"username": os.environ["APP_USER"],
-                                           "password": os.environ["APP_PASSWORD"]})
+    response = client.post("/token", json={"username": "demo" if os.getenv("DEMO_MODE", "false").lower() == "true" else os.environ["APP_USER"],
+                                           "password": "demo123" if os.getenv("DEMO_MODE", "false").lower() == "true" else os.environ["APP_PASSWORD"]})
     response.raise_for_status()
     client.headers["authorization"] = "Bearer " + response.json()["access_token"]
     response = client.post("/jobs", json={"urls": ["http://mock_oem:8003/parts"],

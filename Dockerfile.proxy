@@ -3,4 +3,5 @@ USER root
 WORKDIR /code
 RUN pip install --no-cache-dir redis PyJWT cryptography fastapi
 COPY app /code/app
+COPY sites.json /code/sites.json
 ENV PYTHONPATH=/code

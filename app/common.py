@@ -49,10 +49,10 @@ local slot = math.max(now, next)
 redis.call('SET', KEYS[1], slot + tonumber(ARGV[2]), 'PX', 120000)
 return tostring(slot - now)
 """
-async def pace(host):
+async def pace(host, minimum=None):
     import asyncio
     delay = float(await r.eval(PACE, 1, "pace:" + host,
-                               time.time(), float(os.getenv("PACE_SECONDS", "2"))))
+                               time.time(), max(float(os.getenv("PACE_SECONDS", "2")), minimum or 0)))
     await asyncio.sleep(delay)
 
 async def init_key():

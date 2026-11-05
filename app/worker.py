@@ -60,6 +60,9 @@ class BrowserPool:
 pool = BrowserPool()
 
 async def acquire(job):
+    if job["engine"] == "public_http":
+        from app.site_crawler import acquire_site
+        return await acquire_site(job)
     tenant = job["tenant"]
     async with httpx.AsyncClient(timeout=90, headers={"x-internal-secret": INTERNAL}) as client:
         for url in dict.fromkeys(job["urls"]):
@@ -135,7 +138,10 @@ async def run():
         job["state"] = "running"
         job["results"] = []
         await r.set("job:" + job_id, json.dumps(job), ex=86400)
-        lease = r.lock("lock:acquire:" + job["tenant"] + ":" + ALLOWED_HOST,
+        from app.site_profiles import profiles
+        from urllib.parse import urlsplit
+        host = urlsplit((profiles().get(job.get("site_id", "ford")) or job["profile"])["origin"]).hostname if job["engine"] == "public_http" else ALLOWED_HOST
+        lease = r.lock("lock:acquire:" + job["tenant"] + ":" + host,
                        timeout=660, blocking_timeout=2)
         if not await lease.acquire():
             await r.lrem("processing", 1, job_id)

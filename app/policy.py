@@ -29,5 +29,13 @@ def in_window(hour=None):
     return START <= hour < END if START < END else hour >= START or hour < END
 
 def blocked(status, text):
+    # A script containing "recaptcha" is not evidence that the page is blocked.
+    import re
+    visible = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", text, flags=re.I | re.S).lower()
     return status in (401, 403, 429, 531) or any(
-        marker in text.lower() for marker in ("captcha", "verify you are human", "access denied"))
+        marker in visible for marker in ("verify you are human", "access denied", "complete the captcha", "checking your browser"))
+
+
+def allowed_proxy_url(url):
+    from app.site_profiles import allowed_network
+    return allowed_url(url) or allowed_network(url)

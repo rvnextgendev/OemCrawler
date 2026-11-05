@@ -27,6 +27,10 @@ async def dashboard():
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"})
 
+@app.get("/ui/config", include_in_schema=False)
+async def dashboard_config():
+    return {"demo_mode": os.getenv("DEMO_MODE", "false").lower() == "true", "allow_public_urls": os.getenv("ALLOW_PUBLIC_URLS", "false").lower() == "true"}
+
 @app.get("/ui/app.js", include_in_schema=False)
 async def dashboard_script():
     return FileResponse(UI_DIR / "app.js", media_type="text/javascript")
@@ -45,11 +49,13 @@ return n
 async def forward(path: str, request: Request):
     import datetime
     tenant = await r.get("key:" + fingerprint(request.headers.get("x-api-key", "")))
+    if not tenant and not request.headers.get("x-api-key") and os.getenv("DEMO_MODE", "false").lower() == "true":
+        tenant = "demo"
     if not tenant:
         raise HTTPException(401, "Invalid API key")
     # Expose only explicitly supported routes, never a generic internal relay.
     valid = ((request.method == "POST" and path in ("token", "jobs", "logout"))
-             or (request.method == "GET" and path == "jobs")
+             or (request.method == "GET" and path in ("jobs", "sites"))
              or (request.method == "GET" and path.startswith("jobs/")
                  and len(path.split("/")) == 2))
     if not valid:

@@ -20,7 +20,7 @@ services:
   worker:
     <<: *app
     command: python -m app.worker
-    volumes: ["documents:/data"]
+    volumes: ["documents:/data", "proxy_ca:/proxy-ca:ro"]
   browser_service:
     <<: *app
     expose: ["8002"]
@@ -31,8 +31,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.proxy
+    volumes: ["proxy_ca:/proxy-ca"]
     expose: ["8080"]
-    command: mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set connection_strategy=lazy -s /code/app/proxy.py
+    command: mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set connection_strategy=lazy --set confdir=/proxy-ca -s /code/app/proxy.py
   mock_oem:
     <<: *app
     command: uvicorn app.mock_oem:app --host 0.0.0.0 --port 8003
@@ -49,3 +50,4 @@ services:
 volumes:
   documents:
   redis_data:
+  proxy_ca:

@@ -1,265 +1,264 @@
-# Controlled OEM collection — Python sample
+# OEM Crawler — public and form-login collection
 
-A small service-based example of authorized login, collection and optional AI cleanup.
-It runs against **a local mock OEM portal**, not Kia, Nissan, Porsche, BMW or Ford.
-Those sites require separately approved adapters and credentials. Crawl4AI is a fetch
-engine; it does not guarantee access through anti-bot controls. Both engines use
-ordinary headless Chromium. CAPTCHA, access denial and throttling stop collection.
+A Python/FastAPI acquisition sample with a browser dashboard, Redis jobs, a policy
+proxy, cached documents and optional enrichment. It supports public HTML sites,
+configured HTML form logins, and an authenticated Playwright/Crawl4AI mock OEM demo.
+
+The old **URL violates approved-origin policy** problem came from accepting only
+`mock_oem`. Auto now selects a matching profile. In local demo mode it also accepts
+other public HTTPS origins after public-address checks. Login sites use explicit
+server-side profiles so their credentials are never sent to a guessed destination.
+
+**There is no guarantee of access to every website.** SSO, MFA, CAPTCHA, blocked
+responses, JavaScript-only pages and site-specific entitlements need additional
+approved adapters or a human handoff. Nothing bypasses a site's access controls.
+
+## Update and run (Windows PowerShell)
+
+Install Docker Desktop with Linux containers and Git. For an existing checkout:
+
+```powershell
+cd OemCrawler
+git pull origin main
+
+# Enable local demo sign-in and public HTTPS URLs; preserves existing secrets.
+docker run --rm -v "${PWD}:/work" -w /work python:3.12-slim sh -c "pip install cryptography && python configure.py --demo"
+
+docker compose up --build -d
+docker compose ps
+```
+
+For a fresh checkout, first run:
+
+```powershell
+git clone https://github.com/rvnextgendev/OemCrawler.git
+cd OemCrawler
+```
+
+Then run the setup/build commands above. Initial builds download Chromium and can
+take several minutes. On Linux/macOS, use `-v "$PWD:/work"` instead of `${PWD}`.
+
+Open **http://localhost:8000/ui**, then hard-refresh (`Ctrl+F5`) if an older UI is
+still visible.
+
+| Local demo login field | Value |
+|---|---|
+| Username | `demo` |
+| Password | `demo123` |
+| API key | Leave blank; optional only in demo mode |
+
+`configure.py --demo` sets `DEMO_MODE=true` and `ALLOW_PUBLIC_URLS=true`. The demo
+login is independent of the randomly generated `APP_PASSWORD`. Bind only to
+localhost, as Compose already does. This example login is not for public hosting.
+
+To return to generated credentials and configured origins only, run the setup
+command with `--secure`, then recreate services. Secure mode uses `API_KEY`,
+`APP_USER` and `APP_PASSWORD` from `.env` and requires the API key. Do not share or
+commit `.env`.
+
+## Use the UI
+
+1. Sign in. Leave **Auto** selected for the source and engine.
+2. Paste an approved public HTTPS URL, or choose an example from **Demo source**.
+3. Choose page limit (1–20) and link depth (0–2), then start extraction.
+4. Open the job to inspect status, extracted text and the full JSON record.
+5. Refresh manually, or enable active-job polling every 15 seconds. Polling stops
+   when the job finishes or the browser tab is hidden. API quotas include polls.
+6. Export JSON to save the results. Source HTML is stored in the document volume;
+   the UI renders text only, never active source HTML.
+
+The recent list shows the latest 50 tenant jobs retained for 24 hours. Old jobs
+created before the list index was added can still be opened by ID until expiry.
+
+### Included examples
+
+| Source | Mode | What to expect |
+|---|---|---|
+| Mock OEM | Authenticated browser | Fixed demo login; Crawl4AI or Playwright; catalogue part `DEMO-1001` |
+| Ford Support | Public HTTP HTML | `https://www.ford.com/support/`; no Ford password required; support scope only |
+| Quotes public | Public HTTP HTML | A public scraping-practice catalogue |
+| Quotes login | HTTP form login | Select this profile explicitly; server credentials `QUOTES_USER` and `QUOTES_PASSWORD` |
+
+The demo setup initializes both Quotes credential variables to `demo`. These are
+practice-site example values, not real OEM credentials. If the external practice
+site changes its behavior, review its form/profile; the local mock remains the
+controlled test target.
+
+Ford returned HTTP 403 to the authoring-environment check. This code does not
+assert that Ford collection succeeded. A denied page becomes `blocked` rather
+than triggering a bypass. Ford's robots.txt advertised a 10-second crawl delay.
+
+## What gets extracted
+
+External HTML collection saves the original HTML, title, visible source text,
+headings, table rows, in-scope links, SHA-256 hash, timestamp and cache metadata.
+It follows same-origin links with bounded breadth-first traversal. Tracking query
+strings/fragments are removed by default; profiles may set `keep_query: true`.
+PDFs, images, downloads and content rendered only by JavaScript are excluded.
+
+`max_pages` limits page attempts, including redirects/skips, not a promise of that
+many saved pages. `completed` means the configured scope finished. Inspect
+`limit_reached`, `depth_limit_reached`, `frontier_remaining`, `coverage` and `skipped`
+to assess coverage. It is not an "all content on the whole site" claim.
+
+Job states include `queued`, `running`, `deferred`, `completed`, `blocked`,
+`login_required`, `no_content` and `failed`. Acquisition windows prevent starting
+new requests outside the window; in-flight requests can finish afterward.
+
+## Public URLs and custom sites
+
+With `ALLOW_PUBLIC_URLS=true`, Auto can create a public-only profile for an
+explicitly submitted HTTPS origin. It validates all DNS answers as public,
+registers a 24-hour proxy grant and rechecks addresses at the proxy. IP literals,
+private hosts, non-HTTPS destinations and mixed-origin jobs are rejected. Crawls
+stay on the original origin; cross-origin redirects are not followed.
+
+For persistent reviewed public profiles, edit `sites.json` or run:
+
+```powershell
+docker run --rm -v "${PWD}:/work" -w /work python:3.12-slim python manage_sites.py --id my_site --name "My website" --url https://example.com/help/ --prefix /help/
+docker compose up --build -d
+```
+
+Replace example.com with the actual website you are authorized to collect from.
+Profile changes require rebuilding the services, including the proxy. This keeps
+its configured-origin policy aligned with the orchestrator.
+
+## Add a real form-login website
+
+Use a profile rather than pasting credentials into a URL or frontend source:
+
+```powershell
+docker run --rm -v "${PWD}:/work" -w /work python:3.12-slim python manage_sites.py --id my_login_site --name "My authenticated site" --url https://example.com/docs/ --prefix /docs/ --login-url https://example.com/login --username-field email --password-field password --username-env MY_SITE_USER --password-env MY_SITE_PASSWORD --success-selector "a[href='/logout']"
+```
+
+Add your own credentials locally to `.env`:
+
+```dotenv
+MY_SITE_USER=your-authorized-account
+MY_SITE_PASSWORD=your-password
+```
+
+Then rebuild and select that profile explicitly in the UI. Form field names,
+form selector and success selector must match the actual site. The adapter:
+
+- Fetches robots rules before acquisition and login.
+- Uses a same-origin POST form and preserves hidden fields, including CSRF tokens.
+- Posts credentials only to the exact configured login URL.
+- Follows only approved GET redirects and requires a positive success selector.
+- Encrypts cookie state in Redis for 15 minutes; cache/session keys are scoped by
+  tenant, profile and credential identity.
+
+This handles basic HTML forms. It does not automatically handle JavaScript login,
+SSO, OAuth, MFA, CAPTCHA, a different form submission endpoint or arbitrary browser
+scripts. Those need a reviewed site-specific adapter. Mock browser engines are
+kept separate from external HTTP collection; Auto chooses the supported engine.
 
 ## Architecture
 
 | Component | Port | Responsibility |
 |---|---:|---|
-| platform_api | 8000 | API-key lookup, atomic daily request quota, narrow forwarding allowlist |
-| orchestrator | 8001 internal | JWT minting/revocation, role checks, tenant ownership, URL policy, job submission/status |
-| worker (orchestrator engine) | none | Redis frontier, acquisition windows, locks, encrypted sessions, browser pool, cache, audit, enrichment |
-| browser_service | 8002 internal | Fixed mock login adapter and optional plain Playwright fetching |
-| egress_proxy | 8080 internal | Exact origin allowlist, DNS address checks, shared per-domain pacing, HTTP 531 conversion |
-| Crawl4AI | in worker | In-process collection, using authenticated browser state and the proxy |
-| Redis | 6379 internal | API keys, quota, JWT state, locks, frontier, processing queue, sessions, pace slots, cache, audit stream |
-| mock_oem | 8003 internal | Demo sign-in form, protected parts catalogue, blocked endpoint |
-| document volume | none | Content-addressed raw HTML under `/data/<tenant>/<sha256>.html` |
+| platform_api | 8000 | UI, API key or local demo mode, request quota, narrow forwarding |
+| orchestrator | 8001 internal | JWT/RBAC, profile resolution, public DNS admission, tenant job APIs |
+| worker | none | Frontier, locks, windows, login state, pool, acquisition, cache, audit, enrichment |
+| browser_service | 8002 internal | Mock OEM Playwright login and optional browser fetching |
+| egress_proxy | 8080 internal | Origin policy, DNS checks, per-domain pacing, blocked-response conversion |
+| Crawl4AI | in worker | In-process authenticated mock acquisition |
+| HTTPX | in worker | Public and basic HTML form-login collection |
+| Redis | 6379 internal | Keys, quotas, JWT state, queues, locks, cookies, pace slots, caches, audit index |
+| mock_oem | 8003 internal | Controlled sign-in/parts/blocked demo pages |
 
-Only port 8000 is published, bound to localhost. This is the public gateway boundary
-in the sample; add a TLS ingress before remote access.
+Only port 8000 is published, on loopback. Exactly **one worker replica** is supported.
+Its startup recovery requeues interrupted work, giving at-least-once execution.
+Live Crawl4AI browsers are held in worker memory (pool limit two); serialized login
+state belongs in Redis, not live browser objects.
 
-The worker belongs logically to the orchestrator but runs separately so accepted
-jobs survive API restarts. Exactly **one worker replica** is supported. Redis AOF and
-named volumes persist across ordinary container restarts.
+The proxy's generated CA lives in `proxy_ca`. External HTTPX clients explicitly
+trust its certificate and keep upstream TLS verification enabled. Private CA keys
+stay in the proxy volume. If a very early job reports `ProxyCertificateNotReady`,
+wait for proxy startup, then submit again. Browser CA trust for external Chromium
+sites is not configured because current external profiles use HTTPX.
 
-## Quick start (Windows 11 / PowerShell, Docker only)
+Robots 404/410 means no published policy; unavailable/redirected/error policies
+fail closed. Conservative Disallow matching honors wildcards, but may skip an
+Allow exception. HTTP HTML requests wait at least 10 seconds, and honor a longer
+crawl-delay; the proxy also paces every domain. A blocked domain pauses for five
+minutes. HTTP **531** is a private proxy signal, not a standard HTTP status.
 
-Install Docker Desktop with Linux containers and Git. No host Python is required.
+## API
 
-```powershell
-git clone https://github.com/rvnextgendev/OemCrawler.git
-cd OemCrawler
+Use the gateway at `http://localhost:8000`:
 
-# Generate local secrets with a temporary Python container.
-docker run --rm -v "${PWD}:/work" -w /work python:3.12-slim sh -c "pip install cryptography && python configure.py"
+- `POST /token`: application username/password; returns JWT.
+- `GET /sites`: safe configured-profile metadata, not credentials.
+- `POST /jobs`: create a tenant job.
+- `GET /jobs`: up to 50 recent tenant summaries.
+- `GET /jobs/{id}`: full tenant-owned job record.
+- `POST /logout`: revoke JWT.
 
-# Build and start all seven services.
-docker compose up --build -d
-docker compose ps
+All data endpoints require `Authorization: Bearer <JWT>`. Secure mode also requires
+`X-API-Key`. Internal services require the separate internal secret. Public UI
+assets/configuration disclose no generated secrets.
+
+```json
+{
+  "urls": ["https://www.ford.com/support/?gnav=header-support"],
+  "engine": "auto",
+  "site_id": null,
+  "max_pages": 5,
+  "max_depth": 1,
+  "enrich": false
+}
 ```
 
-The first build downloads Chromium and can take several minutes. Wait for the
-services to start, then run the demo inside the gateway container:
+`site_id: "quotes_login"` selects the configured login example. A job's seeds must
+belong to one profile/origin. Default quota is 1,000 API requests/day; public HTML
+responses are capped at two megabytes, with at most 20 page attempts per job and a
+600-second total worker deadline. `WINDOW_START_UTC`/`WINDOW_END_UTC` default to all day.
+
+## Optional enrichment
+
+Default `ENRICH_PROVIDER=local` returns title/word count; it is not an LLM call.
+For external AI, set `ENRICH_PROVIDER=openai` or `claude`, `LLM_MODEL`, the appropriate
+`OPENAI_API_KEY`/`ANTHROPIC_API_KEY`, and `ALLOW_EXTERNAL_ENRICHMENT=true` in `.env`.
+Recreate worker and request `enrich: true`. Up to 10,000 text characters are sent
+to that provider; enable only for approved content. Credentials/cookies are not
+intentionally included, but source-page sensitive content needs your redaction policy.
+AI output is separate, marked for review; raw source remains unchanged. Provider
+failure preserves acquisition and records an enrichment error.
+
+## Checks and troubleshooting
 
 ```powershell
+docker compose exec platform_api python -m unittest discover -s tests -v
+docker compose exec platform_api python -m compileall -q app configure.py manage_sites.py scripts_demo.py
 docker compose exec platform_api python scripts_demo.py
-```
-
-On Linux/macOS, use `-v "$PWD:/work"` instead of the PowerShell mount expression.
-The remaining Docker Compose commands are identical.
-
-The demo gets a JWT through the gateway, submits a Crawl4AI job and polls its
-status. Expected final state: `completed`, with part `DEMO-1001`, raw HTML
-location, SHA-256 hash, extracted text and local enrichment metadata.
-Run it a second time within an hour: the result should report `cached: True`.
-The browser pool keeps up to two authenticated Crawl4AI instances in the worker;
-encrypted login state is shared through Redis for 15 minutes.
-
-The public API is available at `http://localhost:8000`. Internal ports are not
-published. View logs and stop services with:
-
-```powershell
 docker compose logs -f worker browser_service egress_proxy
 docker compose down
 ```
 
-### Alternative: use host Python for setup and demo
+32 tests pass during authoring, using in-process Redis/network doubles. Checks
+cover auth, tenant boundaries, profile matching, dynamic-origin admission, public
+DNS rejection, login/CSRF handling, cross-origin credential protection, response
+limits, robots handling and block detection. Python compilation and JavaScript
+syntax checks also pass. Docker and live external acquisition/provider calls have
+not been verified in the authoring environment; Ford's observed 403 remains a limit.
 
-If Python 3.10+ is already installed:
+**Still seeing the old policy message?** Run `git pull`, rebuild **all** services,
+then hard-refresh the browser. Existing environment variables require container
+recreation, not just `docker compose restart`. If Auto rejects an unknown site in
+secure mode, add a profile or explicitly enable public URLs. Do not disable
+private-address checks to make a destination work.
 
-```powershell
-python -m pip install cryptography httpx
-python configure.py
-docker compose up --build -d
-python scripts_demo.py
-```
+Named volumes survive `docker compose down`. Deleting volumes deletes documents,
+Redis state and proxy CA material. Jobs expire after 24 hours, raw extraction caches
+after one hour, encrypted sessions after 15 minutes. Document files need a retention
+policy. The audit stream is capped, not an immutable compliance ledger.
 
-Do not commit `.env`. The setup script generates independent API, application,
-OEM, Redis and encryption secrets. It never overwrites an existing `.env`.
+For production: IdP/entitlements, secrets vault, network egress isolation and DNS
+pinning (current checks do not prevent every rebinding race), durable object storage,
+Redis Streams/leases for multiple workers, telemetry, retention, and reviewed OEM
+adapters are still required. Only collect content your account/licence permits.
 
-## Web dashboard
-
-After starting Docker, open **http://localhost:8000/ui** (the root URL redirects here).
-No frontend container or JavaScript build is required; FastAPI serves the dashboard
-on the same origin as the API.
-
-1. Open your local `.env` in an editor. Enter `API_KEY`, `APP_USER` and `APP_PASSWORD`
-   into the dashboard sign-in form. Do not enter OEM credentials here.
-2. Submit the prefilled demo URL with Crawl4AI or Playwright. Enrichment is optional.
-3. Select **View** on a recent job. Inspect status, extracted text, cache usage,
-   source hash, stored path, enrichment and the full JSON record.
-4. Use **Refresh**, or opt into 15-second auto-refresh for the selected active job.
-   Refresh calls count against the API quota; polling stops for terminal jobs and
-   hidden browser tabs. Auto-refresh is disabled by default.
-5. Use **Export JSON** to download the selected job, or **Sign out** to revoke its JWT.
-
-API keys and JWTs live only in tab memory, not browser storage. A reload requires
-sign-in again; jobs remain in Redis. The list shows up to 50 recent jobs from your
-tenant, retained for 24 hours. Jobs created before the dashboard index was added
-can still be opened by their ID until their original records expire.
-
-Extracted source content is rendered as plain text, never as active HTML. Summary
-cards reflect the loaded recent-job list, not lifetime totals or service health.
-The mock URL and server allowlist remain unchanged. Real OEM collection still
-requires a reviewed site adapter. No credentials are embedded in the frontend.
-
-Update an existing checkout:
-
-```powershell
-git pull origin main
-docker compose up --build -d
-# Then open http://localhost:8000/ui
-```
-
-## API example
-
-All requests go through `http://localhost:8000` with `X-API-Key` from `.env`.
-
-1. `POST /token` with `{"username":"demo","password":"<APP_PASSWORD>"}`.
-2. Add `Authorization: Bearer <access_token>` to subsequent requests.
-3. `POST /jobs` with the body below.
-4. `GET /jobs/<job_id>` to inspect state and results.
-5. `POST /logout` to revoke the current JWT immediately in Redis.
-
-```json
-{
-  "urls": ["http://mock_oem:8003/parts"],
-  "engine": "crawl4ai",
-  "enrich": true
-}
-```
-
-Use `"engine": "playwright"` for browser_service fetching. Login is performed by
-browser_service for both engines; Crawl4AI then reuses the authenticated state.
-The submitted URL list is a bounded crawl frontier (maximum ten URLs), not an
-automatic whole-site discovery crawler. No user-supplied JS or selectors run.
-
-Job states: `queued`, `running`, `deferred`, `completed`, `blocked`,
-`login_required`, `failed`. Failed/blocked jobs require a reviewed new submission;
-there is no automatic block bypass or credential retry loop.
-
-## Demonstrate policy and block handling
-
-- Submit `http://169.254.169.254/latest`: job creation returns HTTP 400.
-- Submit `http://mock_oem:8003/blocked`: proxy converts upstream 403 to private
-  HTTP 531; the job becomes `blocked`, login state is discarded, and that domain
-  is paused for five minutes. The public job endpoint still returns JSON normally;
-  531 is the internal proxy signal.
-- Set `WINDOW_START_UTC=6` and `WINDOW_END_UTC=18` in `.env`, then recreate the
-  services. An uncached job outside 06:00–18:00 UTC becomes `deferred` and is
-  requeued every 30 seconds. Overnight windows are supported. Default: all day.
-- Set `DAILY_QUOTA=5`, restart, and make requests to see HTTP 429. This is a
-  **daily API-request quota**, including polling and login, not a page quota.
-- Set `PACE_SECONDS=3` to change the shared minimum spacing. Both navigation
-  and proxy requests are paced, so a page with multiple resources can take longer.
-
-## Optional AI cleanup
-
-Default `ENRICH_PROVIDER=local` only returns title and word count; **this is not
-an LLM call**. To use an external provider, append deployment settings to `.env`:
-
-```dotenv
-ENRICH_PROVIDER=openai
-ALLOW_EXTERNAL_ENRICHMENT=true
-LLM_MODEL=<a model available in your API account>
-OPENAI_API_KEY=<your API key>
-```
-
-Or use `ENRICH_PROVIDER=claude` and `ANTHROPIC_API_KEY` with an available Claude
-model. Recreate worker after changing configuration. Set `enrich: true` on the job.
-External mode sends up to 10,000 characters of extracted page text to the selected
-provider and may incur API charges. Enable it only for content approved for that
-provider. Credentials and browser cookies are not intentionally included; sensitive
-page content still needs your own redaction policy. API subscriptions are separate
-from consumer ChatGPT/Claude subscriptions.
-
-Source HTML stays unchanged. AI output is separate, marked `needs_review`, and
-must not be treated as verified technical specifications. Provider failure preserves
-the acquired document and returns an enrichment error. The provider cannot call
-tools, navigate sites or modify the acquisition policy.
-
-## Files to study
-
-| File | What to learn |
-|---|---|
-| `app/gateway.py` | Dashboard delivery, API keys, quota and forwarding |
-| `app/ui/` | Responsive dashboard in HTML, CSS and JavaScript |
-| `app/orchestrator.py` | JWT/RBAC, tenant isolation and job APIs |
-| `app/worker.py` | Session reuse, pool, frontier, locking, pacing, cache and storage |
-| `app/browser_service.py` | Playwright login and extraction |
-| `app/proxy.py` | mitmproxy addon and HTTP 531 |
-| `app/policy.py` | URL, address, time-window and block rules |
-| `app/enrichment.py` | Local/OpenAI/Claude adapters |
-| `app/mock_oem.py` | Safe demo login target |
-
-## Tests and troubleshooting
-
-```powershell
-docker compose exec platform_api python -m unittest discover -s tests -v
-docker compose exec platform_api python -m compileall -q app configure.py scripts_demo.py
-docker compose ps
-docker compose logs worker browser_service egress_proxy
-```
-
-Ten tests cover origin restrictions, private/mixed DNS answers, block detection,
-overnight windows, dashboard assets, authentication, tenant filtering and gateway
-forwarding. Dashboard tests use Redis/client doubles; they do not require live services. The demo script is the integration
-smoke test; it requires the running containers. Python compilation and these ten
-tests were verified during creation; Docker, Crawl4AI runtime and provider calls
-were not available for end-to-end execution in the authoring environment.
-Dependencies are version ranges, not a resolved lockfile; resolve and pin a tested
-set before deploying. If Crawl4AI's proxy/config API changes, start with the plain
-Playwright engine and update `fetch()` against the installed version.
-
-Use `docker compose down` to stop without deleting stored data. Deleting Docker
-volumes deletes documents and job state. Raw HTML files are intentionally not
-served directly by the public API because they can contain active page content.
-
-## What a real OEM deployment still needs
-
-This is a learning scaffold, not a production-complete anti-bot platform.
-
-- Add reviewed login/extraction adapters per OEM, licensed URLs/path scopes,
-  entitlement checks, permitted collection hours, robots/contract policy and
-  official export/API integrations where available. `#parts` is a mock-only
-  success selector. MFA/CAPTCHA requires an approved human handoff; none is
-  solved or bypassed by this sample.
-- Replace demo single-user auth with an IdP and configured tenant/account grants.
-  Do not expose the mock portal or reuse demo secrets. Move secrets to a vault.
-- The proxy validates DNS answers, but it does not pin them to the eventual socket.
-  Add network egress enforcement, DNS pinning and subnet deny rules to prevent
-  rebinding and browser proxy bypass. Container networking here is **not** a
-  hardened SSRF isolation boundary.
-- HTTPS OEM traffic needs the mitmproxy CA installed in the browser trust store.
-  The mock uses HTTP so the sample needs no trust-store setup. Do not disable TLS
-  verification as a shortcut. Trusting a CA requires appropriate internal controls.
-- Only one approved origin is supported; external/CDN resources are denied. Build
-  explicit reviewed per-OEM resource allowlists without widening navigation scope.
-- A collection window prevents new acquisitions; in-flight requests may finish
-  after closing time. Add hard cancellation for strict cutoffs. Redis-time slots
-  assume synchronized host clocks and bounded queue wait.
-- The pool holds live browsers in worker memory, with encrypted serialized login
-  state in Redis. Redis cannot store a running Playwright browser. Extend pool
-  eviction, account ownership and idle cleanup for production.
-- Use Redis Streams consumer groups/leases for multiple workers. Current recovery
-  requeues interrupted jobs at startup and is safe only with one worker. At-least-
-  once execution can repeat requests after crashes. Content hashing reduces file
-  duplication; it does not provide exactly-once collection.
-- Add page/byte quotas, response streaming limits (the current HTML cap is after
-  fetch), download/PDF handling, per-page checkpoints, retention, browser memory
-  budgets, structured parts parsing, durable object storage and monitoring.
-- Redis audit is a capped operational stream, not an immutable compliance log.
-  Job records expire after 24 hours, cached results after one hour, browser state
-  after 15 minutes; raw files and Redis mock session records need retention rules.
-
-## API references
-
-- https://docs.crawl4ai.com/api/parameters/
-- https://docs.crawl4ai.com/advanced/proxy-security/
-- https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create
-- https://platform.claude.com/docs/en/api/messages/create
+References: https://docs.crawl4ai.com/api/parameters/,
+https://www.ford.com/robots.txt, https://quotes.toscrape.com/login.

@@ -1,0 +1,46 @@
+{
+  "mock": {
+    "name": "Mock OEM · authenticated parts",
+    "origin": "http://mock_oem:8003",
+    "path_prefix": "/",
+    "mode": "mock",
+    "start_url": "http://mock_oem:8003/parts",
+    "pace_seconds": 2
+  },
+  "ford": {
+    "name": "Ford Support · public HTML",
+    "origin": "https://www.ford.com",
+    "path_prefix": "/support/",
+    "mode": "public",
+    "start_url": "https://www.ford.com/support/?gnav=header-support",
+    "pace_seconds": 10,
+    "robots_required": true
+  },
+  "quotes_public": {
+    "name": "Quotes · public HTML demo",
+    "origin": "https://quotes.toscrape.com",
+    "path_prefix": "/",
+    "mode": "public",
+    "start_url": "https://quotes.toscrape.com/",
+    "pace_seconds": 2,
+    "robots_required": true
+  },
+  "quotes_login": {
+    "name": "Quotes · form-login demo",
+    "origin": "https://quotes.toscrape.com",
+    "path_prefix": "/",
+    "mode": "form_login",
+    "start_url": "https://quotes.toscrape.com/",
+    "pace_seconds": 2,
+    "robots_required": true,
+    "login": {
+      "url": "https://quotes.toscrape.com/login",
+      "form_selector": "form",
+      "username_field": "username",
+      "password_field": "password",
+      "username_env": "QUOTES_USER",
+      "password_env": "QUOTES_PASSWORD",
+      "success_selector": "a[href='/logout']"
+    }
+  }
+}

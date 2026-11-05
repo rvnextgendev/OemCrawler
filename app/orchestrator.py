@@ -9,6 +9,12 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 from app.common import r, internal, principal, SECRET, audit
 from app.policy import allowed_url
+from app.site_profiles import resolve, normalize as normalize_site, metadata, public_profile
+from app.common import fingerprint
+from app.policy import public_addresses
+import asyncio
+import socket
+from urllib.parse import urlsplit
 
 app = FastAPI(title="Internal orchestrator", dependencies=[Depends(internal)])
 
@@ -18,7 +24,10 @@ class Login(BaseModel):
 
 class Crawl(BaseModel):
     urls: list[str] = Field(min_length=1, max_length=10)
-    engine: str = Field(default="crawl4ai", pattern="^(crawl4ai|playwright)$")
+    engine: str = Field(default="auto", pattern="^(auto|crawl4ai|playwright|public_http)$")
+    site_id: str | None = Field(default=None, max_length=64)
+    max_pages: int = Field(default=5, ge=1, le=20)
+    max_depth: int = Field(default=1, ge=0, le=2)
     enrich: bool = False
 
 @app.post("/token")
@@ -29,8 +38,11 @@ async def token(body: Login, x_tenant: str = Header()):
         await r.expire("login-attempt:" + x_tenant, 300)
     if attempts > 10:
         raise HTTPException(429, "Login throttled for five minutes")
-    if not (hmac.compare_digest(body.username, os.environ["APP_USER"])
-            and hmac.compare_digest(body.password, os.environ["APP_PASSWORD"])):
+    demo = os.getenv("DEMO_MODE", "false").lower() == "true"
+    username = "demo" if demo else os.environ["APP_USER"]
+    password = "demo123" if demo else os.environ["APP_PASSWORD"]
+    if not (hmac.compare_digest(body.username, username)
+            and hmac.compare_digest(body.password, password)):
         raise HTTPException(401, "Invalid credentials")
     jti = uuid.uuid4().hex
     await r.set("jwt:" + jti, x_tenant, ex=3600)
@@ -48,11 +60,34 @@ async def logout(user=Depends(principal)):
 async def create(body: Crawl, user=Depends(principal)):
     if user["role"] != "crawler":
         raise HTTPException(403, "Crawler role required")
-    if any(not allowed_url(url) for url in body.urls):
-        raise HTTPException(400, "URL violates approved-origin policy")
+    try:
+        site_id, profile = resolve(body.urls, body.site_id)
+    except ValueError as exc:
+        if body.site_id or os.getenv("ALLOW_PUBLIC_URLS", "false").lower() != "true":
+            raise HTTPException(400, str(exc))
+        try:
+            profile = public_profile(body.urls[0])
+            if not all(normalize_site(url,profile) for url in body.urls):
+                raise ValueError("Use one HTTPS origin per job and HTML page URLs")
+            host = urlsplit(profile["origin"]).hostname
+            infos = await asyncio.to_thread(socket.getaddrinfo, host, 443, type=socket.SOCK_STREAM)
+            if not public_addresses([info[4][0] for info in infos]):
+                raise ValueError("Destination does not resolve exclusively to public addresses")
+        except (ValueError, OSError) as policy_error:
+            raise HTTPException(400, str(policy_error))
+        site_id = "public-" + fingerprint(profile["origin"])[:16]
+        await r.set("public-origin:" + host, json.dumps(profile), ex=86400)
+    body.site_id = site_id
+    body.urls = list(dict.fromkeys(normalize_site(url,profile) for url in body.urls))
+    if body.engine == "auto":
+        body.engine = "crawl4ai" if profile["mode"] == "mock" else "public_http"
+    if profile["mode"] != "mock" and body.engine != "public_http":
+        raise HTTPException(400, "This external profile uses HTML HTTP collection. Choose Auto or Public / form-login HTML; dynamic sites need a reviewed browser adapter.")
+    if profile["mode"] == "mock" and body.engine == "public_http":
+        raise HTTPException(400, "Use Auto, Crawl4AI or Playwright for the mock profile")
     job_id = uuid.uuid4().hex
     record = {"id": job_id, "tenant": user["tenant"], "state": "queued", "created_at": time.time(),
-              **body.model_dump(), "results": []}
+              **body.model_dump(), "profile": profile, "results": []}
     async with r.pipeline(transaction=True) as pipe:
         pipe.set("job:" + job_id, json.dumps(record), ex=86400)
         pipe.lpush("frontier", job_id)
@@ -63,6 +98,10 @@ async def create(body: Crawl, user=Depends(principal)):
         await pipe.execute()
     await audit("job_created", job=job_id, tenant=user["tenant"])
     return {"job_id": job_id, "status_url": "/jobs/" + job_id}
+
+@app.get("/sites")
+async def sites(user=Depends(principal)):
+    return {"sites": metadata()}
 
 @app.get("/jobs")
 async def list_jobs(user=Depends(principal)):

@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let apiKey = '', token = '', selected = null, timer = null, busy = false, generation = 0;
+let availableSites = [];
 const activeStates = new Set(['queued', 'running', 'deferred']);
 function notice(message, error = false) {
   $('notice').hidden = false; $('notice').textContent = message;
@@ -38,7 +39,7 @@ function renderJobs(jobs) {
   $('total-count').textContent = jobs.length;
   $('done-count').textContent = jobs.filter(j => j.state === 'completed').length;
   $('active-count').textContent = jobs.filter(j => activeStates.has(j.state)).length;
-  $('attention-count').textContent = jobs.filter(j => ['blocked','failed','login_required'].includes(j.state)).length;
+  $('attention-count').textContent = jobs.filter(j => ['blocked','failed','login_required','no_content'].includes(j.state)).length;
   for (const job of jobs) {
     const row = node('tr'), source = node('td');
     source.append(node('div', job.id.slice(0, 10), 'job-name'));
@@ -61,9 +62,10 @@ function renderDetails(job) {
     deferred: 'Waiting for the configured acquisition window.', completed: 'Extraction finished. Review the source text and any enrichment below.',
     blocked: 'The source blocked collection. Review permissions and site policy before creating another job.',
     login_required: 'Login could not be confirmed. Review the server-side login adapter.',
+    no_content: 'No HTML content was saved. Inspect skipped URLs and coverage in the JSON record.',
     failed: 'Extraction failed. Inspect the worker logs for details.'
   };
-  $('job-message').textContent = (messages[job.state] || job.state) + (job.error ? ' Error: ' + job.error : '');
+  $('job-message').textContent = (messages[job.state] || job.state) + (job.error ? ' Error: ' + job.error : '') + (job.coverage ? ' ' + job.coverage : '') + (job.limit_reached ? ' Page/depth scope was limited; this is not a full-site export.' : '');
   $('results').replaceChildren();
   for (const [index, result] of job.results.entries()) {
     const card = node('article', undefined, 'result-card');
@@ -103,7 +105,7 @@ $('login-form').addEventListener('submit', async event => {
     token = data.access_token; $('api-key').value = ''; $('password').value = '';
     $('login-panel').hidden = true; $('workspace').hidden = false;
     $('connection').textContent = 'Connected · ' + $('username').value;
-    notice('Connected. Submit an extraction or inspect a recent job.'); await refreshJobs();
+    notice('Connected. Submit an extraction or inspect a recent job.'); await refreshJobs(); await loadSites();
   } catch(error) { notice(error.message, true); if (!token) apiKey = ''; }
   finally { $('login-button').disabled = false; }
 });
@@ -113,7 +115,7 @@ $('job-form').addEventListener('submit', async event => {
   if (urls.length < 1 || urls.length > 10) { notice('Enter between 1 and 10 source URLs.', true); return; }
   $('submit-button').disabled = true;
   try {
-    const created = await request('/jobs', 'POST', {urls, engine: $('engine').value, enrich: $('enrich').checked});
+    const created = await request('/jobs', 'POST', {urls, engine: $('engine').value, enrich: $('enrich').checked, max_pages: Number($('max-pages').value), max_depth: Number($('max-depth').value), site_id: $('preset').value === 'auto' ? null : $('preset').value});
     notice('Extraction queued. Select Refresh to follow progress, or enable auto-refresh.');
     await refreshJobs(); await openJob(created.job_id);
   } catch(error) { notice(error.message, true); }
@@ -145,3 +147,42 @@ $('download').addEventListener('click', () => {
   const a = node('a'); a.href = url; a.download = 'oem-job-' + selected.id + '.json'; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
+
+async function loadSites() {
+  const data = await request('/sites');
+  availableSites = data.sites;
+  $('preset').replaceChildren();
+  const auto = node('option', 'Auto · match URL to a configured website'); auto.value = 'auto';
+  $('preset').append(auto);
+  for (const site of availableSites) {
+    const option = node('option', site.name); option.value = site.id; $('preset').append(option);
+  }
+}
+$('preset').addEventListener('change', () => {
+  const site = availableSites.find(s => s.id === $('preset').value);
+  $('engine').value = 'auto';
+  if (!site) {
+    $('source-hint').textContent = 'Paste a public HTTPS URL. Auto uses its public profile; choose an explicit profile for login sites. Unknown public origins require ALLOW_PUBLIC_URLS=true.';
+    return;
+  }
+  $('urls').value = site.start_url;
+  $('source-hint').textContent = site.mode === 'mock'
+    ? 'Mock OEM uses the Playwright login adapter and server-side credentials.'
+    : site.mode === 'form_login'
+    ? 'Basic HTML form login using server-side credentials, CSRF hidden fields and encrypted cookie reuse. SSO, MFA and JavaScript login require a reviewed adapter.'
+    : 'Public HTML text, headings, tables and links. No website login. Robots rules and pacing apply. JavaScript-only content and PDFs are excluded.';
+});
+// Pasting another website should not retain an unrelated explicit profile.
+$('urls').addEventListener('input', () => { $('preset').value = 'auto'; $('engine').value = 'auto'; });
+fetch('/ui/config', {cache:'no-store'}).then(response => {
+  if (!response.ok) throw new Error('Configuration unavailable');
+  return response.json();
+}).then(config => {
+  if (config.demo_mode) {
+    $('api-key').required = false;
+    $('api-key').placeholder = 'Optional in local demo mode';
+    $('username').value = 'demo';
+    $('password').value = 'demo123';
+    $('login-hint').textContent = 'Local demo: username demo · password demo123 · API key optional. Do not expose demo mode publicly.';
+  }
+}).catch(() => { $('login-hint').textContent = 'Use API_KEY, APP_USER and APP_PASSWORD from .env. Could not load demo configuration.'; });
