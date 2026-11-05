@@ -1,0 +1,51 @@
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  platform_api:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    command: uvicorn app.gateway:app --host 0.0.0.0 --port 8000
+  orchestrator:
+    <<: *app
+    expose: ["8001"]
+    command: uvicorn app.orchestrator:app --host 0.0.0.0 --port 8001
+  worker:
+    <<: *app
+    command: python -m app.worker
+    volumes: ["documents:/data"]
+  browser_service:
+    <<: *app
+    expose: ["8002"]
+    command: uvicorn app.browser_service:app --host 0.0.0.0 --port 8002
+  egress_proxy:
+    <<: *app
+    entrypoint: []
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    expose: ["8080"]
+    command: mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set connection_strategy=lazy -s /code/app/proxy.py
+  mock_oem:
+    <<: *app
+    command: uvicorn app.mock_oem:app --host 0.0.0.0 --port 8003
+  redis:
+    image: redis:7-alpine
+    env_file: .env
+    command: /bin/sh -c 'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"'
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" ping | grep PONG']
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    volumes: ["redis_data:/data"]
+volumes:
+  documents:
+  redis_data:

@@ -1,0 +1,9 @@
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+httpx>=0.28,<1
+redis>=5,<7
+PyJWT>=2.9,<3
+cryptography>=44,<47
+playwright>=1.51,<2
+crawl4ai>=0.9,<0.10
+beautifulsoup4>=4.12,<5
