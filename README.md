@@ -82,6 +82,40 @@ python scripts_demo.py
 Do not commit `.env`. The setup script generates independent API, application,
 OEM, Redis and encryption secrets. It never overwrites an existing `.env`.
 
+## Web dashboard
+
+After starting Docker, open **http://localhost:8000/ui** (the root URL redirects here).
+No frontend container or JavaScript build is required; FastAPI serves the dashboard
+on the same origin as the API.
+
+1. Open your local `.env` in an editor. Enter `API_KEY`, `APP_USER` and `APP_PASSWORD`
+   into the dashboard sign-in form. Do not enter OEM credentials here.
+2. Submit the prefilled demo URL with Crawl4AI or Playwright. Enrichment is optional.
+3. Select **View** on a recent job. Inspect status, extracted text, cache usage,
+   source hash, stored path, enrichment and the full JSON record.
+4. Use **Refresh**, or opt into 15-second auto-refresh for the selected active job.
+   Refresh calls count against the API quota; polling stops for terminal jobs and
+   hidden browser tabs. Auto-refresh is disabled by default.
+5. Use **Export JSON** to download the selected job, or **Sign out** to revoke its JWT.
+
+API keys and JWTs live only in tab memory, not browser storage. A reload requires
+sign-in again; jobs remain in Redis. The list shows up to 50 recent jobs from your
+tenant, retained for 24 hours. Jobs created before the dashboard index was added
+can still be opened by their ID until their original records expire.
+
+Extracted source content is rendered as plain text, never as active HTML. Summary
+cards reflect the loaded recent-job list, not lifetime totals or service health.
+The mock URL and server allowlist remain unchanged. Real OEM collection still
+requires a reviewed site adapter. No credentials are embedded in the frontend.
+
+Update an existing checkout:
+
+```powershell
+git pull origin main
+docker compose up --build -d
+# Then open http://localhost:8000/ui
+```
+
 ## API example
 
 All requests go through `http://localhost:8000` with `X-API-Key` from `.env`.
@@ -153,7 +187,8 @@ tools, navigate sites or modify the acquisition policy.
 
 | File | What to learn |
 |---|---|
-| `app/gateway.py` | API keys, quota and forwarding |
+| `app/gateway.py` | Dashboard delivery, API keys, quota and forwarding |
+| `app/ui/` | Responsive dashboard in HTML, CSS and JavaScript |
 | `app/orchestrator.py` | JWT/RBAC, tenant isolation and job APIs |
 | `app/worker.py` | Session reuse, pool, frontier, locking, pacing, cache and storage |
 | `app/browser_service.py` | Playwright login and extraction |
@@ -171,9 +206,10 @@ docker compose ps
 docker compose logs worker browser_service egress_proxy
 ```
 
-Four dependency-free policy tests cover origin restrictions, private/mixed DNS
-answers, block detection and overnight windows. The demo script is the integration
-smoke test; it requires the running containers. Python compilation and these four
+Ten tests cover origin restrictions, private/mixed DNS answers, block detection,
+overnight windows, dashboard assets, authentication, tenant filtering and gateway
+forwarding. Dashboard tests use Redis/client doubles; they do not require live services. The demo script is the integration
+smoke test; it requires the running containers. Python compilation and these ten
 tests were verified during creation; Docker, Crawl4AI runtime and provider calls
 were not available for end-to-end execution in the authoring environment.
 Dependencies are version ranges, not a resolved lockfile; resolve and pin a tested

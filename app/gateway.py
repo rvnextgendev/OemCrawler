@@ -3,7 +3,8 @@ import os
 from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse, FileResponse
+from pathlib import Path
 from app.common import r, init_key, fingerprint, INTERNAL
 
 @asynccontextmanager
@@ -13,6 +14,27 @@ async def lifespan(app):
     await r.aclose()
 
 app = FastAPI(title="OEM Platform API", lifespan=lifespan)
+UI_DIR = Path(__file__).parent / "ui"
+
+@app.get("/", include_in_schema=False)
+async def home():
+    return RedirectResponse("/ui")
+
+@app.get("/ui", include_in_schema=False)
+async def dashboard():
+    return FileResponse(UI_DIR / "index.html", headers={
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"})
+
+@app.get("/ui/app.js", include_in_schema=False)
+async def dashboard_script():
+    return FileResponse(UI_DIR / "app.js", media_type="text/javascript")
+
+@app.get("/ui/style.css", include_in_schema=False)
+async def dashboard_style():
+    return FileResponse(UI_DIR / "style.css", media_type="text/css")
+
 QUOTA = """
 local n = redis.call('INCR', KEYS[1])
 if n == 1 then redis.call('EXPIRE', KEYS[1], 86400) end
@@ -27,6 +49,7 @@ async def forward(path: str, request: Request):
         raise HTTPException(401, "Invalid API key")
     # Expose only explicitly supported routes, never a generic internal relay.
     valid = ((request.method == "POST" and path in ("token", "jobs", "logout"))
+             or (request.method == "GET" and path == "jobs")
              or (request.method == "GET" and path.startswith("jobs/")
                  and len(path.split("/")) == 2))
     if not valid:

@@ -51,14 +51,35 @@ async def create(body: Crawl, user=Depends(principal)):
     if any(not allowed_url(url) for url in body.urls):
         raise HTTPException(400, "URL violates approved-origin policy")
     job_id = uuid.uuid4().hex
-    record = {"id": job_id, "tenant": user["tenant"], "state": "queued",
+    record = {"id": job_id, "tenant": user["tenant"], "state": "queued", "created_at": time.time(),
               **body.model_dump(), "results": []}
     async with r.pipeline(transaction=True) as pipe:
         pipe.set("job:" + job_id, json.dumps(record), ex=86400)
         pipe.lpush("frontier", job_id)
+        index = "jobs-index:" + user["tenant"]
+        pipe.zremrangebyscore(index, "-inf", time.time() - 86400)
+        pipe.zadd(index, {job_id: time.time()})
+        pipe.expire(index, 86400)
         await pipe.execute()
     await audit("job_created", job=job_id, tenant=user["tenant"])
     return {"job_id": job_id, "status_url": "/jobs/" + job_id}
+
+@app.get("/jobs")
+async def list_jobs(user=Depends(principal)):
+    ids = await r.zrevrange("jobs-index:" + user["tenant"], 0, 49)
+    if not ids:
+        return {"jobs": []}
+    records = await r.mget(["job:" + job_id for job_id in ids])
+    summaries = []
+    for raw in records:
+        if not raw:
+            continue
+        record = json.loads(raw)
+        if record["tenant"] != user["tenant"]:
+            continue
+        summaries.append({key: record.get(key) for key in
+                          ("id", "state", "engine", "enrich", "created_at", "urls")})
+    return {"jobs": summaries}
 
 @app.get("/jobs/{job_id}")
 async def status(job_id: str, user=Depends(principal)):
